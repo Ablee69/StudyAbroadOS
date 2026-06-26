@@ -116,7 +116,6 @@ def require_login() -> dict[str, str]:
         st.stop()
         raise SystemExit
 
-    restore_session_from_cookie()
     user = get_current_user()
     if not user or not st.session_state.get("access_token"):
         st.warning("请先使用邮箱和密码登录。")
@@ -139,6 +138,13 @@ def _cookie_manager():
     if COOKIE_MANAGER_KEY not in st.session_state:
         st.session_state[COOKIE_MANAGER_KEY] = stx.CookieManager()
     return st.session_state[COOKIE_MANAGER_KEY]
+
+
+def _component_key(prefix: str) -> str:
+    state_key = f"_{prefix}_counter"
+    count = int(st.session_state.get(state_key, 0))
+    st.session_state[state_key] = count + 1
+    return f"{prefix}_{count}"
 
 
 def _encode_cookie_payload(payload: dict[str, str]) -> str:
@@ -167,6 +173,7 @@ def save_auth_cookie() -> None:
     manager.set(
         AUTH_COOKIE_NAME,
         _encode_cookie_payload(payload),
+        key=_component_key("auth_cookie_set"),
         expires_at=datetime.now() + timedelta(days=REMEMBER_DAYS),
     )
 
@@ -176,7 +183,7 @@ def clear_auth_cookie() -> None:
     if not manager:
         return
     try:
-        manager.delete(AUTH_COOKIE_NAME)
+        manager.delete(AUTH_COOKIE_NAME, key=_component_key("auth_cookie_delete"))
     except Exception:
         pass
 
@@ -187,7 +194,8 @@ def restore_session_from_cookie() -> bool:
     manager = _cookie_manager()
     if not manager:
         return False
-    raw_cookie = manager.get(AUTH_COOKIE_NAME)
+    cookies = manager.get_all(key="auth_cookie_get_all")
+    raw_cookie = cookies.get(AUTH_COOKIE_NAME)
     if not raw_cookie:
         return False
     try:

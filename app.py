@@ -1,6 +1,6 @@
 import streamlit as st
 
-from services.auth import get_current_user, login, restore_session_from_cookie, signup
+from services.auth import get_current_user, login, signup
 from services.config import get_config, save_local_secrets
 from services.repository import dashboard_stats, init_db, money
 from services.ui import card, config_missing_message, setup_page
@@ -33,9 +33,6 @@ if not config.has_supabase_client_config:
     st.stop()
 
 user = get_current_user()
-if not user:
-    restore_session_from_cookie()
-    user = get_current_user()
 
 if user:
     st.success(f"已登录：{user['email']}")
@@ -75,7 +72,9 @@ else:
             ok, message = login(email, password, remember=remember)
             if ok:
                 st.success(message)
-                st.rerun()
+                st.info("登录状态已保存。请点击下面按钮进入系统；以后刷新页面一般不需要重新登录。")
+                if st.button("进入系统", type="primary", use_container_width=True):
+                    st.rerun()
             else:
                 st.error(message)
 
@@ -91,6 +90,8 @@ else:
             if ok:
                 st.success(message)
                 if get_current_user():
-                    st.rerun()
+                    st.info("登录状态已保存。请点击下面按钮进入系统。")
+                    if st.button("进入系统", type="primary", use_container_width=True, key="signup_enter_app"):
+                        st.rerun()
             else:
                 st.error(message)
