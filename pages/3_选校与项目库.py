@@ -48,6 +48,17 @@ def parse_deadline(value: str) -> tuple[str, bool]:
         return text, False
 
 
+def validate_optional_date(value: str) -> tuple[str, bool]:
+    text = value.strip()
+    if not text:
+        return "", True
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+        return text, True
+    except ValueError:
+        return text, False
+
+
 def excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -78,6 +89,20 @@ def project_form(prefix: str, defaults: dict | None = None) -> dict:
     )
     academic_direction = col5.text_input("专业方向", value=defaults.get("academic_direction") or "", key=f"{prefix}_direction")
     website = col6.text_input("项目官网链接", value=defaults.get("website") or "", key=f"{prefix}_website")
+
+    col_source, col_verified = st.columns([2, 1])
+    source_url = col_source.text_input(
+        "信息来源链接",
+        value=defaults.get("source_url") or "",
+        placeholder="官网、招生页或官方 PDF 链接",
+        key=f"{prefix}_source_url",
+    )
+    verified_date = col_verified.text_input(
+        "核验日期",
+        value=defaults.get("verified_date") or "",
+        placeholder="YYYY-MM-DD",
+        key=f"{prefix}_verified_date",
+    )
 
     col7, col8, col9 = st.columns(3)
     tuition = col7.number_input("学费", min_value=0.0, value=float(defaults.get("tuition") or 0), step=1000.0, key=f"{prefix}_tuition")
@@ -119,6 +144,8 @@ def project_form(prefix: str, defaults: dict | None = None) -> dict:
         "degree_type": degree_type,
         "academic_direction": academic_direction,
         "website": website,
+        "source_url": source_url,
+        "verified_date": verified_date,
         "tuition": tuition,
         "living_cost": living_cost,
         "application_fee": application_fee,
@@ -159,6 +186,9 @@ else:
             "program_name",
             "degree_type",
             "academic_direction",
+            "website",
+            "source_url",
+            "verified_date",
             "tuition",
             "living_cost",
             "application_fee",
@@ -173,7 +203,6 @@ else:
             "status",
             "employment_notes",
             "notes",
-            "website",
         ]
     ].rename(
         columns={
@@ -188,6 +217,8 @@ else:
             "living_cost": "生活费预估",
             "application_fee": "申请费",
             "deadline": "截止日期",
+            "source_url": "信息来源链接",
+            "verified_date": "核验日期",
             "gpa_requirement": "GPA 要求",
             "toefl_requirement": "托福要求",
             "gre_gmat_requirement": "GRE/GMAT 要求",
@@ -213,10 +244,14 @@ with tab_add:
     if add_submitted:
         deadline, valid = parse_deadline(new_data["deadline"])
         new_data["deadline"] = deadline
+        verified_date, verified_valid = validate_optional_date(new_data["verified_date"])
+        new_data["verified_date"] = verified_date
         if not new_data["school_name"] or not new_data["program_name"]:
             st.error("学校名称和项目名称不能为空。")
         elif not valid:
             st.error("截止日期格式应为 YYYY-MM-DD，例如 2026-12-01。")
+        elif not verified_valid:
+            st.error("核验日期格式应为 YYYY-MM-DD，例如 2026-06-27。")
         else:
             add_program(new_data)
             st.success("项目已保存。")
@@ -288,10 +323,14 @@ with tab_edit:
         if update_submitted:
             deadline, valid = parse_deadline(updated_data["deadline"])
             updated_data["deadline"] = deadline
+            verified_date, verified_valid = validate_optional_date(updated_data["verified_date"])
+            updated_data["verified_date"] = verified_date
             if not updated_data["school_name"] or not updated_data["program_name"]:
                 st.error("学校名称和项目名称不能为空。")
             elif not valid:
                 st.error("截止日期格式应为 YYYY-MM-DD，例如 2026-12-01。")
+            elif not verified_valid:
+                st.error("核验日期格式应为 YYYY-MM-DD，例如 2026-06-27。")
             else:
                 update_program(selected_id, updated_data)
                 st.success("项目修改已保存。")

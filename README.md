@@ -59,7 +59,7 @@ StudyAbroadOS/
 - `budgets`：预算与奖学金
 - `students`、`courses`、`mistakes`、`feedbacks`、`incomes`：家教工作台扩展表
 
-选校数据库不会预置学校或项目要求，避免虚构信息。你可以在“选校与项目库”里手动新增，也可以下载 Excel 模板，把从官网核实后的学校/项目资料批量导入到自己的账号。
+选校数据库不会预置学校或项目要求，避免虚构信息。你可以在“选校与项目库”里手动新增，也可以下载 Excel 模板，把从官网核实后的学校/项目资料批量导入到自己的账号。建议每条项目都填写“信息来源链接”和“核验日期”，方便后续回到官网二次确认。
 
 建表 SQL 位于：
 
@@ -68,6 +68,19 @@ database/schema.sql
 ```
 
 在 Supabase Dashboard 中打开 SQL Editor，复制并运行该文件内容。SQL 已启用 Row Level Security，并为每张表添加只允许 `auth.uid() = user_id` 的查询、插入、更新和删除策略。
+
+如果你已经建过旧版本数据库，只需要在 Supabase SQL Editor 运行：
+
+```sql
+alter table public.programs add column if not exists source_url text;
+alter table public.programs add column if not exists verified_date date;
+```
+
+同样的升级 SQL 也保存在：
+
+```text
+database/20260627_add_program_source_fields.sql
+```
 
 ## 本地运行
 

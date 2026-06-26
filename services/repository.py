@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -46,6 +47,8 @@ PROGRAM_FIELDS = [
     "degree_type",
     "academic_direction",
     "website",
+    "source_url",
+    "verified_date",
     "tuition",
     "living_cost",
     "application_fee",
@@ -96,8 +99,13 @@ BUDGET_FIELDS = [
     "notes",
 ]
 
-DATE_FIELDS = {"deadline"}
+DATE_FIELDS = {"deadline", "verified_date"}
 BOOLEAN_FIELDS = {"scholarship_available"}
+PROGRAM_NUMERIC_IMPORT_LABELS = {
+    "tuition": "学费",
+    "living_cost": "生活费预估",
+    "application_fee": "申请费",
+}
 
 PROGRAM_IMPORT_COLUMNS = {
     "国家/地区": "region",
@@ -106,6 +114,8 @@ PROGRAM_IMPORT_COLUMNS = {
     "学位类型": "degree_type",
     "专业方向": "academic_direction",
     "项目官网链接": "website",
+    "信息来源链接": "source_url",
+    "核验日期": "verified_date",
     "学费": "tuition",
     "生活费预估": "living_cost",
     "申请费": "application_fee",
@@ -328,11 +338,11 @@ def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], li
 
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
-    numeric_fields = {"tuition", "living_cost", "application_fee"}
 
     for index, raw_row in normalized.iterrows():
         row_number = int(index) + 2
         data: dict[str, Any] = {}
+        import_notes: list[str] = []
         for field in PROGRAM_FIELDS:
             value = raw_row.get(field, "")
             if pd.isna(value):
@@ -349,15 +359,32 @@ def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], li
         if not str(data.get("program_name") or "").strip():
             errors.append(f"第 {row_number} 行缺少项目名称。")
 
-        for field in numeric_fields:
-            data[field] = as_float(data.get(field))
+        for field, label in PROGRAM_NUMERIC_IMPORT_LABELS.items():
+            data[field] = _parse_program_number(data.get(field), label, import_notes)
 
         data["scholarship_available"] = _parse_bool(data.get("scholarship_available"))
-        data["deadline"] = _parse_import_date(data.get("deadline"), row_number, errors)
+        data["deadline"] = _parse_import_date(
+            data.get("deadline"),
+            row_number,
+            errors,
+            field_label="截止日期",
+            notes=import_notes,
+            keep_unparsed_as_note=True,
+        )
+        data["verified_date"] = _parse_import_date(
+            data.get("verified_date"),
+            row_number,
+            errors,
+            field_label="核验日期",
+            notes=import_notes,
+            keep_unparsed_as_note=False,
+        )
         if not data.get("category"):
             data["category"] = "匹配"
         if not data.get("status"):
             data["status"] = "未开始"
+        if import_notes:
+            data["notes"] = _append_notes(data.get("notes"), import_notes)
 
         rows.append(data)
 
@@ -400,10 +427,53 @@ def _parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     text = str(value or "").strip().casefold()
-    return text in {"1", "true", "yes", "y", "是", "有", "有奖学金"}
+    if text in {"1", "true", "yes", "y", "是", "有", "有奖学金"}:
+        return True
+    if text.startswith(("是", "有")):
+        return True
+    if "官网未明确" in text or text in {"0", "false", "no", "n", "否", "无"}:
+        return False
+    return "奖学金" in text or "scholarship" in text
 
 
-def _parse_import_date(value: Any, row_number: int, errors: list[str]) -> str | None:
+def _parse_program_number(value: Any, label: str, notes: list[str]) -> float:
+    if value is None:
+        return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+    except TypeError:
+        pass
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    normalized = text.replace(",", "")
+    try:
+        return float(normalized)
+    except ValueError:
+        notes.append(f"{label}说明：{text}")
+        return 0.0
+
+
+def _append_notes(existing: Any, notes: list[str]) -> str:
+    existing_text = str(existing or "").strip()
+    extra_text = "\n".join(note for note in notes if note)
+    if existing_text and extra_text:
+        return f"{existing_text}\n{extra_text}"
+    return existing_text or extra_text
+
+
+def _parse_import_date(
+    value: Any,
+    row_number: int,
+    errors: list[str],
+    field_label: str,
+    notes: list[str],
+    keep_unparsed_as_note: bool,
+) -> str | None:
     if value is None:
         return None
     if isinstance(value, str) and not value.strip():
@@ -413,11 +483,30 @@ def _parse_import_date(value: Any, row_number: int, errors: list[str]) -> str | 
             return None
     except TypeError:
         return None
+    text = str(value).strip()
+    extracted_date = _extract_date_text(text)
+    if extracted_date:
+        if keep_unparsed_as_note and text != extracted_date:
+            notes.append(f"{field_label}说明：{text}")
+        parsed = pd.to_datetime(extracted_date, errors="coerce")
+        if not pd.isna(parsed):
+            return parsed.date().isoformat()
     parsed = pd.to_datetime(value, errors="coerce")
     if pd.isna(parsed):
-        errors.append(f"第 {row_number} 行截止日期无法识别，请使用 YYYY-MM-DD。")
+        if keep_unparsed_as_note:
+            notes.append(f"{field_label}说明：{value}")
+            return None
+        errors.append(f"第 {row_number} 行{field_label}无法识别，请使用 YYYY-MM-DD。")
         return None
     return parsed.date().isoformat()
+
+
+def _extract_date_text(value: str) -> str:
+    match = re.search(r"(?<!\d)(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)", value)
+    if not match:
+        return ""
+    year, month, day = match.groups()
+    return f"{year}-{int(month):02d}-{int(day):02d}"
 
 
 def update_program(program_id: int | str, data: dict[str, Any]) -> None:

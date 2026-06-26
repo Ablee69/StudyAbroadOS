@@ -35,6 +35,8 @@ PROGRAM_COLUMNS = {
     "degree_type": "学位类型",
     "academic_direction": "专业方向",
     "website": "项目官网链接",
+    "source_url": "信息来源链接",
+    "verified_date": "核验日期",
     "tuition": "学费",
     "living_cost": "生活费预估",
     "application_fee": "申请费",
