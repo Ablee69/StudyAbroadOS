@@ -72,10 +72,11 @@ def setup_page(title: str, *, icon: str = "🎓") -> None:
 
 
 def render_sidebar() -> None:
-    from services.auth import get_current_user, logout
+    from services.auth import get_current_user, logout, restore_session_from_cookie
     from services.config import get_config, masked
 
     config = get_config()
+    restore_session_from_cookie()
     user = get_current_user()
 
     with st.sidebar:

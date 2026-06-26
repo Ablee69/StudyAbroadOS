@@ -49,6 +49,7 @@ PROGRAM_FIELDS = [
     "website",
     "source_url",
     "verified_date",
+    "is_shared",
     "tuition",
     "living_cost",
     "application_fee",
@@ -100,7 +101,7 @@ BUDGET_FIELDS = [
 ]
 
 DATE_FIELDS = {"deadline", "verified_date"}
-BOOLEAN_FIELDS = {"scholarship_available"}
+BOOLEAN_FIELDS = {"scholarship_available", "is_shared"}
 PROGRAM_NUMERIC_IMPORT_LABELS = {
     "tuition": "学费",
     "living_cost": "生活费预估",
@@ -116,6 +117,8 @@ PROGRAM_IMPORT_COLUMNS = {
     "项目官网链接": "website",
     "信息来源链接": "source_url",
     "核验日期": "verified_date",
+    "是否共享": "is_shared",
+    "共享给所有登录用户": "is_shared",
     "学费": "tuition",
     "生活费预估": "living_cost",
     "申请费": "application_fee",
@@ -196,6 +199,11 @@ def _clean_payload(data: dict[str, Any], fields: list[str]) -> dict[str, Any]:
 def _select_owned(table: str, columns: list[str]) -> pd.DataFrame:
     response = _safe_execute(_client().table(table).select("*").eq("user_id", _user_id()), "读取数据")
     return _df(response.data, ["id", "user_id"] + columns + ["created_at", "updated_at"])
+
+
+def _select_accessible_programs() -> pd.DataFrame:
+    response = _safe_execute(_client().table("programs").select("*"), "读取项目")
+    return _df(response.data, ["id", "user_id"] + PROGRAM_FIELDS + ["created_at", "updated_at"])
 
 
 def _insert_owned(table: str, data: dict[str, Any], fields: list[str]) -> int | str:
@@ -284,7 +292,7 @@ def get_programs(
     category: str = "全部",
     status: str = "全部",
 ) -> pd.DataFrame:
-    df = _select_owned("programs", PROGRAM_FIELDS)
+    df = _select_accessible_programs()
     if df.empty:
         return df
     if search.strip():
@@ -320,6 +328,14 @@ def get_program_options() -> pd.DataFrame:
     return df.sort_values(["school_name", "program_name"], na_position="last")[columns]
 
 
+def get_owned_program_options() -> pd.DataFrame:
+    df = _select_owned("programs", PROGRAM_FIELDS)
+    columns = ["id", "school_name", "program_name", "degree_type", "category", "status"]
+    if df.empty:
+        return _empty_df(columns)
+    return df.sort_values(["school_name", "program_name"], na_position="last")[columns]
+
+
 def add_program(data: dict[str, Any]) -> int | str:
     return _insert_owned("programs", data, PROGRAM_FIELDS)
 
@@ -328,7 +344,7 @@ def program_import_template_df() -> pd.DataFrame:
     return pd.DataFrame(columns=PROGRAM_TEMPLATE_COLUMNS)
 
 
-def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], list[str]]:
+def normalize_program_import(df: pd.DataFrame, default_is_shared: bool = True) -> tuple[list[dict[str, Any]], list[str]]:
     if df.empty:
         return [], ["表格是空的。"]
 
@@ -363,6 +379,10 @@ def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], li
             data[field] = _parse_program_number(data.get(field), label, import_notes)
 
         data["scholarship_available"] = _parse_bool(data.get("scholarship_available"))
+        if str(data.get("is_shared") or "").strip():
+            data["is_shared"] = _parse_bool(data.get("is_shared"))
+        else:
+            data["is_shared"] = default_is_shared
         data["deadline"] = _parse_import_date(
             data.get("deadline"),
             row_number,
@@ -391,8 +411,8 @@ def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], li
     return rows, errors
 
 
-def import_programs_from_df(df: pd.DataFrame) -> dict[str, int | list[str]]:
-    rows, errors = normalize_program_import(df)
+def import_programs_from_df(df: pd.DataFrame, default_is_shared: bool = True) -> dict[str, int | list[str]]:
+    rows, errors = normalize_program_import(df, default_is_shared=default_is_shared)
     if errors:
         return {"created": 0, "skipped": 0, "errors": errors}
 

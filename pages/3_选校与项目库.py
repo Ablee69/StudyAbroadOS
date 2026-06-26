@@ -10,7 +10,7 @@ from services.repository import (
     delete_program,
     get_program,
     get_program_filter_values,
-    get_program_options,
+    get_owned_program_options,
     get_programs,
     import_programs_from_df,
     init_db,
@@ -134,6 +134,12 @@ def project_form(prefix: str, defaults: dict | None = None) -> dict:
 
     essay_requirement = st.text_area("文书要求", value=defaults.get("essay_requirement") or "", height=90, key=f"{prefix}_essay_req")
     scholarship_available = st.checkbox("是否有奖学金", value=bool(defaults.get("scholarship_available") or 0), key=f"{prefix}_scholarship")
+    is_shared = st.checkbox(
+        "共享到公共选校库",
+        value=bool(defaults.get("is_shared") or 0),
+        help="开启后，所有登录用户都能看到这条学校/项目信息；只有创建者可以编辑或删除。",
+        key=f"{prefix}_is_shared",
+    )
     employment_notes = st.text_area("就业导向备注", value=defaults.get("employment_notes") or "", height=80, key=f"{prefix}_employment")
     notes = st.text_area("备注", value=defaults.get("notes") or "", height=80, key=f"{prefix}_notes")
 
@@ -156,6 +162,7 @@ def project_form(prefix: str, defaults: dict | None = None) -> dict:
         "recommendation_requirement": recommendation_requirement,
         "essay_requirement": essay_requirement,
         "scholarship_available": int(scholarship_available),
+        "is_shared": int(is_shared),
         "employment_notes": employment_notes,
         "category": category,
         "status": status,
@@ -178,6 +185,7 @@ if programs.empty:
 else:
     display = programs.copy()
     display["scholarship_available"] = display["scholarship_available"].map(lambda value: "是" if int(value or 0) else "否")
+    display["is_shared"] = display["is_shared"].map(lambda value: "公共" if int(value or 0) else "仅自己")
     display = display[
         [
             "id",
@@ -189,6 +197,7 @@ else:
             "website",
             "source_url",
             "verified_date",
+            "is_shared",
             "tuition",
             "living_cost",
             "application_fee",
@@ -219,6 +228,7 @@ else:
             "deadline": "截止日期",
             "source_url": "信息来源链接",
             "verified_date": "核验日期",
+            "is_shared": "可见范围",
             "gpa_requirement": "GPA 要求",
             "toefl_requirement": "托福要求",
             "gre_gmat_requirement": "GRE/GMAT 要求",
@@ -271,6 +281,11 @@ with tab_import:
     )
 
     uploaded_file = st.file_uploader("上传填写好的 Excel 或 CSV", type=["xlsx", "csv"])
+    import_is_shared = st.checkbox(
+        "导入后共享给所有登录用户",
+        value=True,
+        help="建议学校数据库共享；个人申请状态、任务、文书和预算仍然只属于你。",
+    )
     if uploaded_file:
         try:
             upload_df = read_uploaded_program_file(uploaded_file)
@@ -279,7 +294,7 @@ with tab_import:
             upload_df = pd.DataFrame()
 
         if not upload_df.empty:
-            rows, errors = normalize_program_import(upload_df)
+            rows, errors = normalize_program_import(upload_df, default_is_shared=import_is_shared)
             if errors:
                 st.error("导入前检查发现问题，请先修改表格。")
                 for error in errors[:10]:
@@ -293,7 +308,7 @@ with tab_import:
                 preview = pd.DataFrame(rows).head(20)
                 st.dataframe(preview, use_container_width=True, hide_index=True)
                 if st.button("确认导入到我的选校库", type="primary", use_container_width=True):
-                    result = import_programs_from_df(upload_df)
+                    result = import_programs_from_df(upload_df, default_is_shared=import_is_shared)
                     if result["errors"]:
                         st.error("导入失败，请根据提示修改表格。")
                         for error in result["errors"]:
@@ -303,7 +318,7 @@ with tab_import:
                         st.rerun()
 
 with tab_edit:
-    options = get_program_options()
+    options = get_owned_program_options()
     if options.empty:
         st.info("暂无可编辑项目。")
     else:

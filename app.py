@@ -1,6 +1,6 @@
 import streamlit as st
 
-from services.auth import get_current_user, login, signup
+from services.auth import get_current_user, login, restore_session_from_cookie, signup
 from services.config import get_config, save_local_secrets
 from services.repository import dashboard_stats, init_db, money
 from services.ui import card, config_missing_message, setup_page
@@ -33,6 +33,9 @@ if not config.has_supabase_client_config:
     st.stop()
 
 user = get_current_user()
+if not user:
+    restore_session_from_cookie()
+    user = get_current_user()
 
 if user:
     st.success(f"已登录：{user['email']}")
@@ -66,9 +69,10 @@ else:
         with st.form("login_form"):
             email = st.text_input("邮箱", placeholder="you@example.com")
             password = st.text_input("密码", type="password")
+            remember = st.checkbox("在这台设备保持登录", value=True)
             submitted = st.form_submit_button("登录", type="primary", use_container_width=True)
         if submitted:
-            ok, message = login(email, password)
+            ok, message = login(email, password, remember=remember)
             if ok:
                 st.success(message)
                 st.rerun()
@@ -80,9 +84,10 @@ else:
         with st.form("signup_form"):
             signup_email = st.text_input("注册邮箱", placeholder="you@example.com")
             signup_password = st.text_input("注册密码", type="password", help="至少 8 位")
+            signup_remember = st.checkbox("在这台设备保持登录", value=True, key="signup_remember")
             signup_submitted = st.form_submit_button("创建账号", use_container_width=True)
         if signup_submitted:
-            ok, message = signup(signup_email, signup_password)
+            ok, message = signup(signup_email, signup_password, remember=signup_remember)
             if ok:
                 st.success(message)
                 if get_current_user():

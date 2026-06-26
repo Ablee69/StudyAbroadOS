@@ -37,6 +37,7 @@ PROGRAM_COLUMNS = {
     "website": "项目官网链接",
     "source_url": "信息来源链接",
     "verified_date": "核验日期",
+    "is_shared": "可见范围",
     "tuition": "学费",
     "living_cost": "生活费预估",
     "application_fee": "申请费",
@@ -105,6 +106,7 @@ def format_programs(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=PROGRAM_COLUMNS.values())
     output = df.copy()
     output["scholarship_available"] = output["scholarship_available"].map(lambda value: "是" if int(value or 0) else "否")
+    output["is_shared"] = output["is_shared"].map(lambda value: "公共" if int(value or 0) else "仅自己")
     return output[list(PROGRAM_COLUMNS.keys())].rename(columns=PROGRAM_COLUMNS)
 
 

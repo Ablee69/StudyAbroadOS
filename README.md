@@ -59,7 +59,7 @@ StudyAbroadOS/
 - `budgets`：预算与奖学金
 - `students`、`courses`、`mistakes`、`feedbacks`、`incomes`：家教工作台扩展表
 
-选校数据库不会预置学校或项目要求，避免虚构信息。你可以在“选校与项目库”里手动新增，也可以下载 Excel 模板，把从官网核实后的学校/项目资料批量导入到自己的账号。建议每条项目都填写“信息来源链接”和“核验日期”，方便后续回到官网二次确认。
+选校数据库不会预置学校或项目要求，避免虚构信息。你可以在“选校与项目库”里手动新增，也可以下载 Excel 模板，把从官网核实后的学校/项目资料批量导入。导入时可以选择“共享给所有登录用户”，这样学校数据库会成为公共选校库；个人申请档案、任务、文书素材和预算仍然只对当前账号可见。建议每条项目都填写“信息来源链接”和“核验日期”，方便后续回到官网二次确认。
 
 建表 SQL 位于：
 
@@ -74,13 +74,25 @@ database/schema.sql
 ```sql
 alter table public.programs add column if not exists source_url text;
 alter table public.programs add column if not exists verified_date date;
+alter table public.programs add column if not exists is_shared boolean not null default false;
 ```
 
 同样的升级 SQL 也保存在：
 
 ```text
 database/20260627_add_program_source_fields.sql
+database/20260627_make_programs_shareable.sql
 ```
+
+如果已经导入了希望公开给所有登录用户查看的学校项目，可以在 Supabase SQL Editor 额外运行：
+
+```sql
+update public.programs
+set is_shared = true
+where source_url is not null and verified_date is not null;
+```
+
+登录页默认勾选“在这台设备保持登录”。这会在当前浏览器保存 Supabase 登录 token，刷新页面一般不需要重新输入邮箱密码；点击“退出登录”会清除本地登录状态。
 
 ## 本地运行
 
