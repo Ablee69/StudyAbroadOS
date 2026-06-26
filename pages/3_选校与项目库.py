@@ -1,5 +1,7 @@
 from datetime import datetime
+from io import BytesIO
 
+import pandas as pd
 import streamlit as st
 
 from services.auth import require_login
@@ -10,7 +12,10 @@ from services.repository import (
     get_program_filter_values,
     get_program_options,
     get_programs,
+    import_programs_from_df,
     init_db,
+    normalize_program_import,
+    program_import_template_df,
     update_program,
 )
 from services.ui import setup_page
@@ -41,6 +46,20 @@ def parse_deadline(value: str) -> tuple[str, bool]:
         return text, True
     except ValueError:
         return text, False
+
+
+def excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return output.getvalue()
+
+
+def read_uploaded_program_file(uploaded_file) -> pd.DataFrame:
+    name = uploaded_file.name.lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(uploaded_file)
+    return pd.read_excel(uploaded_file)
 
 
 def project_form(prefix: str, defaults: dict | None = None) -> dict:
@@ -185,7 +204,7 @@ else:
 
 st.divider()
 
-tab_add, tab_edit = st.tabs(["新增项目", "编辑/删除项目"])
+tab_add, tab_import, tab_edit = st.tabs(["新增项目", "批量导入", "编辑/删除项目"])
 
 with tab_add:
     with st.form("add_program_form"):
@@ -202,6 +221,51 @@ with tab_add:
             add_program(new_data)
             st.success("项目已保存。")
             st.rerun()
+
+with tab_import:
+    st.subheader("批量导入选校表")
+    st.caption("系统不会内置或编造学校信息。请把你从官网核实后的学校/项目资料填进模板，再导入到自己的账号。")
+
+    template_df = program_import_template_df()
+    st.download_button(
+        "下载选校导入模板 Excel",
+        data=excel_bytes(template_df, "选校导入模板"),
+        file_name="StudyAbroadOS_选校导入模板.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+    uploaded_file = st.file_uploader("上传填写好的 Excel 或 CSV", type=["xlsx", "csv"])
+    if uploaded_file:
+        try:
+            upload_df = read_uploaded_program_file(uploaded_file)
+        except Exception as exc:
+            st.error(f"读取文件失败：{exc}")
+            upload_df = pd.DataFrame()
+
+        if not upload_df.empty:
+            rows, errors = normalize_program_import(upload_df)
+            if errors:
+                st.error("导入前检查发现问题，请先修改表格。")
+                for error in errors[:10]:
+                    st.write(f"- {error}")
+                if len(errors) > 10:
+                    st.caption(f"还有 {len(errors) - 10} 条问题未显示。")
+            elif not rows:
+                st.warning("没有识别到可导入的项目行。")
+            else:
+                st.success(f"已识别 {len(rows)} 条项目，下面是前 20 条预览。")
+                preview = pd.DataFrame(rows).head(20)
+                st.dataframe(preview, use_container_width=True, hide_index=True)
+                if st.button("确认导入到我的选校库", type="primary", use_container_width=True):
+                    result = import_programs_from_df(upload_df)
+                    if result["errors"]:
+                        st.error("导入失败，请根据提示修改表格。")
+                        for error in result["errors"]:
+                            st.write(f"- {error}")
+                    else:
+                        st.success(f"导入完成：新增 {result['created']} 条，跳过重复 {result['skipped']} 条。")
+                        st.rerun()
 
 with tab_edit:
     options = get_program_options()

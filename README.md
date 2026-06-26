@@ -59,6 +59,8 @@ StudyAbroadOS/
 - `budgets`：预算与奖学金
 - `students`、`courses`、`mistakes`、`feedbacks`、`incomes`：家教工作台扩展表
 
+选校数据库不会预置学校或项目要求，避免虚构信息。你可以在“选校与项目库”里手动新增，也可以下载 Excel 模板，把从官网核实后的学校/项目资料批量导入到自己的账号。
+
 建表 SQL 位于：
 
 ```text
@@ -131,6 +133,7 @@ DATABASE_URL = "postgresql://postgres.your-project-ref:your-password@aws-0-regio
 - 删除操作需要先勾选确认。
 - 导出功能只读取当前登录用户的数据。
 - 项目不包含示例学生隐私、家长联系方式或申请资料。
+- 项目不内置学校和项目要求；你的学校数据库来自手动录入或 Excel/CSV 导入。
 
 ## 常见报错排查
 

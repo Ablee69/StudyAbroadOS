@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 from services.auth import get_current_user
 from services.supabase_service import get_supabase_client
@@ -97,6 +99,31 @@ BUDGET_FIELDS = [
 DATE_FIELDS = {"deadline"}
 BOOLEAN_FIELDS = {"scholarship_available"}
 
+PROGRAM_IMPORT_COLUMNS = {
+    "国家/地区": "region",
+    "学校名称": "school_name",
+    "项目名称": "program_name",
+    "学位类型": "degree_type",
+    "专业方向": "academic_direction",
+    "项目官网链接": "website",
+    "学费": "tuition",
+    "生活费预估": "living_cost",
+    "申请费": "application_fee",
+    "截止日期": "deadline",
+    "GPA 要求": "gpa_requirement",
+    "托福要求": "toefl_requirement",
+    "GRE/GMAT 要求": "gre_gmat_requirement",
+    "推荐信要求": "recommendation_requirement",
+    "文书要求": "essay_requirement",
+    "是否有奖学金": "scholarship_available",
+    "就业导向备注": "employment_notes",
+    "申请分类": "category",
+    "当前状态": "status",
+    "备注": "notes",
+}
+
+PROGRAM_TEMPLATE_COLUMNS = list(PROGRAM_IMPORT_COLUMNS.keys())
+
 
 def init_db() -> None:
     EXPORTS_DIR.mkdir(exist_ok=True)
@@ -112,6 +139,23 @@ def _user_id() -> str:
 
 def _client():
     return get_supabase_client(with_session=True)
+
+
+def _safe_execute(query: Any, action: str) -> Any:
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            return query.execute()
+        except Exception as exc:  # Supabase client raises several exception types.
+            last_error = exc
+            if attempt == 0:
+                time.sleep(0.4)
+                continue
+    st.error(f"{action}失败：云端数据库暂时不可用。")
+    st.caption(f"技术信息：{last_error}")
+    st.info("请先刷新页面再试；如果仍失败，检查 Supabase 项目是否暂停、网络是否正常、Secrets 是否填对。")
+    st.stop()
+    raise SystemExit
 
 
 def _empty_df(columns: list[str]) -> pd.DataFrame:
@@ -140,14 +184,14 @@ def _clean_payload(data: dict[str, Any], fields: list[str]) -> dict[str, Any]:
 
 
 def _select_owned(table: str, columns: list[str]) -> pd.DataFrame:
-    response = _client().table(table).select("*").eq("user_id", _user_id()).execute()
+    response = _safe_execute(_client().table(table).select("*").eq("user_id", _user_id()), "读取数据")
     return _df(response.data, ["id", "user_id"] + columns + ["created_at", "updated_at"])
 
 
 def _insert_owned(table: str, data: dict[str, Any], fields: list[str]) -> int | str:
     payload = _clean_payload(data, fields)
     payload["user_id"] = _user_id()
-    response = _client().table(table).insert(payload).execute()
+    response = _safe_execute(_client().table(table).insert(payload), "保存数据")
     if response.data:
         return response.data[0].get("id", "")
     return ""
@@ -155,11 +199,11 @@ def _insert_owned(table: str, data: dict[str, Any], fields: list[str]) -> int | 
 
 def _update_owned(table: str, record_id: int | str, data: dict[str, Any], fields: list[str]) -> None:
     payload = _clean_payload(data, fields)
-    _client().table(table).update(payload).eq("id", record_id).eq("user_id", _user_id()).execute()
+    _safe_execute(_client().table(table).update(payload).eq("id", record_id).eq("user_id", _user_id()), "更新数据")
 
 
 def _delete_owned(table: str, record_id: int | str) -> None:
-    _client().table(table).delete().eq("id", record_id).eq("user_id", _user_id()).execute()
+    _safe_execute(_client().table(table).delete().eq("id", record_id).eq("user_id", _user_id()), "删除数据")
 
 
 def as_float(value: Any) -> float:
@@ -210,7 +254,7 @@ def default_profile() -> dict[str, Any]:
 
 
 def get_profile() -> dict[str, Any]:
-    response = _client().table("profiles").select("*").eq("user_id", _user_id()).limit(1).execute()
+    response = _safe_execute(_client().table("profiles").select("*").eq("user_id", _user_id()).limit(1), "读取个人档案")
     if response.data:
         profile = default_profile()
         profile.update(response.data[0])
@@ -221,7 +265,7 @@ def get_profile() -> dict[str, Any]:
 def update_profile(data: dict[str, Any]) -> None:
     payload = _clean_payload(data, PROFILE_FIELDS)
     payload["user_id"] = _user_id()
-    _client().table("profiles").upsert(payload, on_conflict="user_id").execute()
+    _safe_execute(_client().table("profiles").upsert(payload, on_conflict="user_id"), "保存个人档案")
 
 
 def get_programs(
@@ -254,7 +298,7 @@ def get_programs(
 
 
 def get_program(program_id: int | str) -> dict[str, Any] | None:
-    response = _client().table("programs").select("*").eq("id", program_id).eq("user_id", _user_id()).limit(1).execute()
+    response = _safe_execute(_client().table("programs").select("*").eq("id", program_id).eq("user_id", _user_id()).limit(1), "读取项目")
     return response.data[0] if response.data else None
 
 
@@ -268,6 +312,112 @@ def get_program_options() -> pd.DataFrame:
 
 def add_program(data: dict[str, Any]) -> int | str:
     return _insert_owned("programs", data, PROGRAM_FIELDS)
+
+
+def program_import_template_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=PROGRAM_TEMPLATE_COLUMNS)
+
+
+def normalize_program_import(df: pd.DataFrame) -> tuple[list[dict[str, Any]], list[str]]:
+    if df.empty:
+        return [], ["表格是空的。"]
+
+    column_map = {field: field for field in PROGRAM_FIELDS}
+    column_map.update(PROGRAM_IMPORT_COLUMNS)
+    normalized = df.rename(columns={column: column_map.get(str(column).strip(), column) for column in df.columns})
+
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    numeric_fields = {"tuition", "living_cost", "application_fee"}
+
+    for index, raw_row in normalized.iterrows():
+        row_number = int(index) + 2
+        data: dict[str, Any] = {}
+        for field in PROGRAM_FIELDS:
+            value = raw_row.get(field, "")
+            if pd.isna(value):
+                value = ""
+            if isinstance(value, str):
+                value = value.strip()
+            data[field] = value
+
+        if not any(str(data.get(field) or "").strip() for field in PROGRAM_FIELDS):
+            continue
+
+        if not str(data.get("school_name") or "").strip():
+            errors.append(f"第 {row_number} 行缺少学校名称。")
+        if not str(data.get("program_name") or "").strip():
+            errors.append(f"第 {row_number} 行缺少项目名称。")
+
+        for field in numeric_fields:
+            data[field] = as_float(data.get(field))
+
+        data["scholarship_available"] = _parse_bool(data.get("scholarship_available"))
+        data["deadline"] = _parse_import_date(data.get("deadline"), row_number, errors)
+        if not data.get("category"):
+            data["category"] = "匹配"
+        if not data.get("status"):
+            data["status"] = "未开始"
+
+        rows.append(data)
+
+    return rows, errors
+
+
+def import_programs_from_df(df: pd.DataFrame) -> dict[str, int | list[str]]:
+    rows, errors = normalize_program_import(df)
+    if errors:
+        return {"created": 0, "skipped": 0, "errors": errors}
+
+    existing = get_programs()
+    existing_keys = set()
+    if not existing.empty:
+        for row in existing.to_dict("records"):
+            existing_keys.add(_program_key(row))
+
+    created = 0
+    skipped = 0
+    for row in rows:
+        key = _program_key(row)
+        if key in existing_keys:
+            skipped += 1
+            continue
+        add_program(row)
+        existing_keys.add(key)
+        created += 1
+
+    return {"created": created, "skipped": skipped, "errors": []}
+
+
+def _program_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("school_name") or "").strip().casefold(),
+        str(row.get("program_name") or "").strip().casefold(),
+    )
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().casefold()
+    return text in {"1", "true", "yes", "y", "是", "有", "有奖学金"}
+
+
+def _parse_import_date(value: Any, row_number: int, errors: list[str]) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        errors.append(f"第 {row_number} 行截止日期无法识别，请使用 YYYY-MM-DD。")
+        return None
+    return parsed.date().isoformat()
 
 
 def update_program(program_id: int | str, data: dict[str, Any]) -> None:
@@ -298,7 +448,7 @@ def get_tasks() -> pd.DataFrame:
 
 
 def get_task(task_id: int | str) -> dict[str, Any] | None:
-    response = _client().table("application_tasks").select("*").eq("id", task_id).eq("user_id", _user_id()).limit(1).execute()
+    response = _safe_execute(_client().table("application_tasks").select("*").eq("id", task_id).eq("user_id", _user_id()).limit(1), "读取任务")
     return response.data[0] if response.data else None
 
 
@@ -351,7 +501,7 @@ def get_materials() -> pd.DataFrame:
 
 
 def get_material(material_id: int | str) -> dict[str, Any] | None:
-    response = _client().table("writing_materials").select("*").eq("id", material_id).eq("user_id", _user_id()).limit(1).execute()
+    response = _safe_execute(_client().table("writing_materials").select("*").eq("id", material_id).eq("user_id", _user_id()).limit(1), "读取文书素材")
     return response.data[0] if response.data else None
 
 
@@ -430,7 +580,7 @@ def get_budgets() -> pd.DataFrame:
 
 
 def get_budget(budget_id: int | str) -> dict[str, Any] | None:
-    response = _client().table("budgets").select("*").eq("id", budget_id).eq("user_id", _user_id()).limit(1).execute()
+    response = _safe_execute(_client().table("budgets").select("*").eq("id", budget_id).eq("user_id", _user_id()).limit(1), "读取预算")
     return response.data[0] if response.data else None
 
 
